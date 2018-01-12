@@ -13,7 +13,8 @@ from keras.layers import BatchNormalization
 from keras.optimizers import RMSprop
 from matplotlib import pyplot as pp
 
-from scipy.misc import imsave, imread, imresize
+from scipy.misc import imsave, imread, imresize, toimage
+
 
 #image data folder
 imdata_folder = "./image_data"
@@ -46,7 +47,8 @@ pp.imshow(flags[5])
 def normalize_images(images):
     new_images = []
     for image in images:
-        image = image/255.
+        image = (image/255.)*2.
+        image = image - 1.
         new_images.append(image)
         
     return new_images
@@ -108,7 +110,7 @@ def G():
 
 g_nn = G()
 
-s_optimizer = RMSprop(lr=0.005)
+s_optimizer = RMSprop(lr=0.001)
 s_model = Sequential()
 s_model.add(g_nn)
 s_model.add(d_nn)
@@ -116,7 +118,7 @@ s_model.compile(optimizer=s_optimizer, loss='binary_crossentropy')
 
 #noise for generator
 def noise_generator():
-    return np.array([np.random.uniform(-1., 1., size=100)])
+    return np.random.uniform(-1., 1., size=100)
 
 #generate  fake image for generator error calculation
 def error_image(error, out_image):
@@ -129,38 +131,55 @@ def b_crossentropy(target, prediction):
     else:
         return -np.log(1.-prediction)
 
-epochs=500
-
+epochs = 500
+batch_size = 20
+g_errs = []
+d_r_errs = []
+d_f_errs = []
 #training!
 for epoch in range(epochs):
     np.random.shuffle(flags)
-    for nb, image in enumerate(flags):
-        y = np.array([1.])
-        x = np.array([image])
+    
+    for batch in range(int(np.ceil(len(flags)/batch_size))):
+        start = batch*batch_size
+        end = start+batch_size
+        end = min(len(flags), end)
+        curr_batch_size = end-start
+        curr_batch = np.array(flags[start:end])
+        
+        y = np.array([1.]*curr_batch_size)
+        x = curr_batch
         d_r_err = d_model.train_on_batch(x, y)
         
-        noise = noise_generator()
+        noise = np.array([noise_generator() for i in range(curr_batch_size)])
         x = noise
         x = g_nn.predict(x)
         
-        y = np.array([0.])
+        y = np.array([0.]*curr_batch_size)
         d_f_err = d_model.train_on_batch(x, y)
         weights_save = d_model.get_weights()
         
-        noise = noise_generator()
-        y = np.array([1.])
+        noise = np.array([noise_generator() for i in range(curr_batch_size)])
+        y = np.array([1.]*curr_batch_size)
         g_err = s_model.train_on_batch(noise, y)
         d_model.set_weights(weights_save)
         
-        print("g_err = %f, d_r_err = %f, d_f_err = %f, image = %d" % (g_err, d_r_err, d_f_err, nb))
+        g_errs.append(g_err)
+        d_r_errs.append(d_r_err)
+        d_f_errs.append(d_f_err)
+        
+        print("g_err = %f, d_r_err = %f, d_f_err = %f, batch = %d" % (g_err, d_r_err, d_f_err, batch))
         
     print("finished epoch %d" % epoch)
     g_nn.save('g_nn')
     d_nn.save('d_nn')
     
-    noise = noise_generator()
-    image = g_nn.predict(noise)[0]
-    image = image*255
+    noise = np.array([noise_generator() for i in range(curr_batch_size)])
+    images = g_nn.predict(noise)
+    images = images + 1.
+    images = images/2.
+    images = images*255.
     
-    imsave('epoch'+str(epoch)+'.png', image)
-    
+    for i, image in enumerate(images):
+        toimage(image, cmin=0, cmax=255).save('./epochs/epoch'+str(epoch)+'_'+str(i)+'.png')
+
